@@ -1,0 +1,11 @@
+#Python
+.venv/
+__pycache__/
+*.pyc
+
+#Secrets
+.env
+
+#OS
+.DS_Store
+
