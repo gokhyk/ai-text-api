@@ -1,12 +1,11 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from openai import OpenAI
 import openai
 
 from dotenv import load_dotenv
 import os
-import json
 
 load_dotenv()
 
@@ -16,15 +15,8 @@ app = FastAPI()
 client = OpenAI()  # <-- CORRECT
 
 
-log_file = "open_api_log_file.txt"
-error_file = "open_api_error_file.txt"
 
 # ---- Request / Response Schemas ----
-
-# 1. Define the desired output structure using Pydantic
-class AnalysisOutput(BaseModel):
-    summary: str = Field(description="A concise summary of the text.")
-    key_points: list[str] = Field(description="A bulleted list of the most important points.")
 
 class SummarizeRequest(BaseModel):
     text: str
@@ -44,29 +36,16 @@ def summarize(request: SummarizeRequest):
         response = client.chat.completions.create(
             model="gpt-5-nano",
             messages=[
-                {"role": "system", "content": "Summarize the following text clearly and concisely and provide key points"},
+                {"role": "system", "content": "Summarize the following text clearly and concisely."},
                 {"role": "user", "content": request.text}
             ],
-            # Specify the structured output format
-            response_format={"type": "json_schema",
-                             "json_schema": {"name": "summary_schema",
-                                "schema": {
-                                 "type": "object", 
-                                    "properties": {                                
-                                    "summary": {"type": "string"},
-                                    "key_points": {"type": "array", "items": {"type": "string"}},
-                }, 
-                "required": ["summary", "key_points"], 
-                "additionalProperties": False,}}}
+            temperature=0.3,
         )
 
         content = response.choices[0].message.content
         if content is None:
             raise HTTPException(status_code=502, detail="Model returned no content")
         summary = content.strip()
-        with open(log_file, 'a') as lf:
-            lf.write(request.text)
-            lf.write(json.dumps(summary))
 
         return {"summary": summary}
     
