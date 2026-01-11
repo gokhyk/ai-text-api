@@ -10,3 +10,7 @@ __pycache__/
 #OS
 .DS_Store
 
+#LOG
+open_api_log_file.txt
+open_api_error_file.txt
+
