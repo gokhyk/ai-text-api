@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, Response
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+import traceback
 
 try:
     #pydantic v2
@@ -73,6 +74,32 @@ error_logger = _setup_jsonl_logger("openai.error", error_file, logging.ERROR)
 def _log_json(logger: logging.Logger, payload: dict[str, Any], level: int = logging.INFO) -> None:
     logger.info(json.dumps(payload, ensure_ascii=False))
 
+def _traceback_frames() -> list[dict[str, Any]]:
+    tb = traceback.TracebackException.from_exception(Exception()).stack
+    return [{"file": f.filename, "line": f.lineno, "func": f.name} for f in tb]
+
+def _exception_to_dict(e: Exception) -> dict[str, Any]:
+    te = traceback.TracebackException.from_exception(e)
+    return {
+        "type": type(e).__name__,
+        "message": str(e),
+        "stack": [
+            {
+                "file": f.filename,
+                "line": f.lineno,
+                "func": f.name,
+                "code": (f.line or "").strip(),
+            }
+            for f in te.stack
+        ],
+    }
+
+def _log_exception_json(logger: logging.Logger, payload: dict[str, Any]) -> None:
+    payload = dict(payload)
+    payload["traceback"] = traceback.format_exc()
+    logger.error(json.dumps(payload, ensure_ascii=False))
+
+
 # ----------------------------
 # Schemas
 # ----------------------------
@@ -108,125 +135,129 @@ class SummarizeRequest(BaseModel):
 
 class SummarizeResponse(BaseModel):
     summary: NonEmptyStr
-    keypoints: list[NonEmptyStr] = Field(default_factory=list)
+    key_points: list[NonEmptyStr] = Field(default_factory=list)
 
 
 # ---- Endpoint ----
 
 @app.post("/summarize", response_model=SummarizeResponse)
 def summarize(request: SummarizeRequest) -> SummarizeResponse:
+    return summarize_v1(request)
+# """ 
 
-    _log_json(reqres_logger, {
-        "ts": _now_iso(),
-        "event": "summarize.called",
-        "text_len": len(text),  })
-    text = (request.text or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Text cannot be empty")
-
-    try:
-        start = time.perf_counter()
-        response = client.chat.completions.create(
-            model="gpt-5-nano",
-            messages=[
-                {"role": "system", 
-                 "content": "Summarize the following text clearly and concisely and provide key points"},
-                {"role": "user", 
-                 "content": text}
-            ],
-            # Specify the structured output format
-            response_format={"type": "json_schema",
-                             "json_schema": {
-                                 "name": "summary_schema",
-                                 "strict": True,            
-                                "schema": {
-                                 "type": "object", 
-                                    "properties": {                                
-                                    "summary": {"type": "string"},
-                                    "key_points": {"type": "array", "items": {"type": "string"}},
-                }, 
-                "required": ["summary", "key_points"], 
-                "additionalProperties": False,}}}
-        )
-        duration_ms = round((time.perf_counter() - start) * 1000, 2)
-
-        response_id = getattr(response, "id", None)
-        request_id = getattr(response, "_request_id", None)
-
-        content = response.choices[0].message.content
-        if not content:
-            raise HTTPException(status_code=502, detail="Model returned no content")
-
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            parsed = {"summary": content.strip(), "key_points": []}
-
-        #validated = AnalysisOutput.model_validate(parsed)
-        try:
-            if hasattr(AnalysisOutput, "model_validate"):   # Pydantic v2
-                validated = AnalysisOutput.model_validate(parsed)
-            else:  # Pydantic v1
-                validated = AnalysisOutput.parse_obj(parsed)
-        except ValidationError as e:
-            error_logger.exception(json.dumps({
-                "ts": _now_iso(),
-                "event": "schema_validation_failed",
-                "error": str(e),
-                "raw_content_preview": _text_preview(content, 500),
-            }, ensure_ascii=False))
-            raise HTTPException(status_code=502, detail="Model returned invalid structured output")
-
-        _log_json(
-            reqres_logger,
-            {
-                "ts": _now_iso(),
-                "latency": duration_ms,
-                "event": "openai.chat.completions",
-                "request": {
-                    "model": "gpt-5-nano",
-                    "text_len": len(text),
-                    "text_preview": _text_preview(text),
-                },
-                "response": {
-                    "response_id": response_id,
-                    "request_id": request_id,
-                    "parsed": {"summary": validated.summary, "key_points": validated.key_points},
-                },
-            },
-        )
-
-        return SummarizeResponse(summary=validated.summary, keypoints=validated.key_points)
-
-    except openai.OpenAIError as e:
-        error_logger.exception(
-            json.dumps(
-                {
-                    "ts": _now_iso(),
-                    "event": "openai.error",
-                    "error": str(e),
-                    "text_len": len(text),
-                    "text_preview": _text_preview(text),
-                },
-                ensure_ascii=False,
-            )
-        )
-        raise HTTPException(status_code=502, detail=str(e))
+#     text = (request.text or "").strip()
+#     if not text:
+#         raise HTTPException(status_code=400, detail="Text cannot be empty")
     
-    except Exception as e:
-        error_logger.exception(json.dumps({
-            "ts": _now_iso(),
-            "event": "server.error",
-            "error_type": type(e).__name__,
-            "error": str(e),
-            "text_len": len(text),
-            "text_preview": _text_preview(text),
-        }, ensure_ascii=False))
-        raise HTTPException(status_code=500, detail="Internal server error")
+#     _log_json(reqres_logger, {
+#         "ts": _now_iso(),
+#         "event": "summarize.called",
+#         "text_len": len(text),  })
+    
+#     try:
+#         start = time.perf_counter()
+#         response = client.chat.completions.create(
+#             model="gpt-5-nano",
+#             messages=[
+#                 {"role": "system", 
+#                  "content": "Summarize the following text clearly and concisely and provide key points"},
+#                 {"role": "user", 
+#                  "content": text}
+#             ],
+#             # Specify the structured output format
+#             response_format={"type": "json_schema",
+#                              "json_schema": {
+#                                  "name": "summary_schema",
+#                                  "strict": True,            
+#                                 "schema": {
+#                                  "type": "object", 
+#                                     "properties": {                                
+#                                     "summary": {"type": "string"},
+#                                     "key_points": {"type": "array", "items": {"type": "string"}},
+#                 }, 
+#                 "required": ["summary", "key_points"], 
+#                 "additionalProperties": False,}}}
+#         )
+#         duration_ms = round((time.perf_counter() - start) * 1000, 2)
+
+#         response_id = getattr(response, "id", None)
+#         request_id = getattr(response, "_request_id", None)
+
+#         content = response.choices[0].message.content
+#         if not content:
+#             raise HTTPException(status_code=502, detail="Model returned no content")
+
+#         try:
+#             parsed = json.loads(content)
+#         except json.JSONDecodeError:
+#             parsed = {"summary": content.strip(), "key_points": []}
+
+#         #validated = AnalysisOutput.model_validate(parsed)
+#         try:
+#             if hasattr(AnalysisOutput, "model_validate"):   # Pydantic v2
+#                 validated = AnalysisOutput.model_validate(parsed)
+#             else:  # Pydantic v1
+#                 validated = AnalysisOutput.parse_obj(parsed)
+#         except ValidationError as e:
+#             error_logger.exception(json.dumps({
+#                 "ts": _now_iso(),
+#                 "event": "schema_validation_failed",
+#                 "error": str(e),
+#                 "raw_content_preview": _text_preview(content, 500),
+#             }, ensure_ascii=False))
+#             raise HTTPException(status_code=502, detail="Model returned invalid structured output")
+
+#         _log_json(
+#             reqres_logger,
+#             {
+#                 "ts": _now_iso(),
+#                 "latency": duration_ms,
+#                 "event": "openai.chat.completions",
+#                 "request": {
+#                     "model": "gpt-5-nano",
+#                     "text_len": len(text),
+#                     "text_preview": _text_preview(text),
+#                 },
+#                 "response": {
+#                     "response_id": response_id,
+#                     "request_id": request_id,
+#                     "parsed": {"summary": validated.summary, "key_points": validated.key_points},
+#                 },
+#             },
+#         )
+
+#         return SummarizeResponse(summary=validated.summary, key_points=validated.key_points)
+
+#     except openai.OpenAIError as e:
+#         error_logger.exception(
+#             json.dumps(
+#                 {
+#                     "ts": _now_iso(),
+#                     "event": "openai.error",
+#                     "error": str(e),
+#                     "text_len": len(text),
+#                     "text_preview": _text_preview(text),
+#                 },
+#                 ensure_ascii=False,
+#             )
+#         )
+#         raise HTTPException(status_code=502, detail=str(e))
+    
+#     except Exception as e:
+#         error_logger.exception(json.dumps({
+#             "ts": _now_iso(),
+#             "event": "server.error",
+#             "error_type": type(e).__name__,
+#             "error": str(e),
+#             "text_len": len(text),
+#             "text_preview": _text_preview(text),
+#         }, ensure_ascii=False))
+#         raise HTTPException(status_code=500, detail="Internal server error") """
 
 
 @app.post("/v1/summarize", response_model=SummarizeResponse)
 def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
+
     request_id = _new_request_id()
     start = time.perf_counter()
 
@@ -244,6 +275,11 @@ def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
     
     _log_json(reqres_logger, {
         "ts": _now_iso(),
+        "event": "summarize.called",
+        "text_len": len(text),  })
+        
+    _log_json(reqres_logger, {
+        "ts": _now_iso(),
         "event": "summarize.start",
         "request_id": request_id,
         "text_len": len(text),
@@ -254,6 +290,7 @@ def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
     try:
         response = client.chat.completions.create(
             model="gpt-5-nano",
+            #model="this-model-does-not-exist",
             messages=[
                 {
                     "role": "system",
@@ -296,8 +333,7 @@ def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
         except json.JSONDecodeError:
             parsed = {"summary": content.strip(), "key_points": []}
 
-        #Validate against Pydantic schema
-        #validated = AnalysisOutput.model_validate(parsed)
+
         try:
             if hasattr(AnalysisOutput, "model_validate"):   # Pydantic v2
                 validated = AnalysisOutput.model_validate(parsed)
@@ -332,24 +368,25 @@ def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
             }
         })
 
-        return SummarizeResponse(summary=validated.summary, keypoints=validated.key_points)
+        return SummarizeResponse(summary=validated.summary, key_points=validated.key_points)
 
-    except HTTPException:
-        # Already a clean HTTP error; also log it with latency
+
+    except HTTPException as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        error_logger.exception(json.dumps({
+        _log_exception_json(error_logger, {
             "ts": _now_iso(),
             "event": "summarize.fail",
             "request_id": request_id,
-            "status_code": 502,
+            "status_code": e.status_code,
             "latency_ms": latency_ms,
             "error_type": "http_exception",
-        }, ensure_ascii=False))
-        raise HTTPException(status_code=502, detail="Summarize failed")
+            "detail": e.detail,
+        })
+        raise
 
     except openai.OpenAIError as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        error_logger.exception(json.dumps({
+        _log_exception_json(error_logger, {
             "ts": _now_iso(),
             "event": "summarize.fail",
             "request_id": request_id,
@@ -359,12 +396,13 @@ def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
             "error": str(e),
             "text_len": len(text),
             "text_preview": _text_preview(text),
-        }, ensure_ascii=False))
+        })
         raise HTTPException(status_code=502, detail="Upstream model request failed")
+
 
     except Exception as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        error_logger.exception(json.dumps({
+        _log_exception_json(error_logger, {
             "ts": _now_iso(),
             "event": "summarize.fail",
             "request_id": request_id,
@@ -374,8 +412,9 @@ def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
             "error": str(e),
             "text_len": len(text),
             "text_preview": _text_preview(text),
-        }, ensure_ascii=False))
+        })
         raise HTTPException(status_code=500, detail="Internal server error")
+
     
 
 @app.get("/")
