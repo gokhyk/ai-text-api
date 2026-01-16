@@ -43,8 +43,10 @@ git clone <your-repo-url>
 cd ai-text-api
 python -m venv .venv
 source .venv/bin/activate
+```
 
 ### 2. Install dependencies
+
 pip install fastapi uvicorn python-dotenv openai
 
 ### 3. Set environment variables
@@ -134,5 +136,3 @@ strong validation
 debuggable logs
 
 It serves as a foundation for more advanced AI APIs.
-
-
