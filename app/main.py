@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from typing import Any, Annotated
 
-import openai
+from openai import OpenAIError
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -74,10 +74,6 @@ error_logger = _setup_jsonl_logger("openai.error", error_file, logging.ERROR)
 def _log_json(logger: logging.Logger, payload: dict[str, Any], level: int = logging.INFO) -> None:
     logger.info(json.dumps(payload, ensure_ascii=False))
 
-def _traceback_frames() -> list[dict[str, Any]]:
-    tb = traceback.TracebackException.from_exception(Exception()).stack
-    return [{"file": f.filename, "line": f.lineno, "func": f.name} for f in tb]
-
 def _exception_to_dict(e: Exception) -> dict[str, Any]:
     te = traceback.TracebackException.from_exception(e)
     return {
@@ -129,7 +125,7 @@ class AnalysisOutput(BaseModel):
 
     sentiment: list[NonEmptyStr] = Field(default_factory=list, description="Sentiment of the text.")
     topics: list[NonEmptyStr] = Field(default_factory=list, description="Topics in the text.")
-    confidence: float = Field(description="confidence level of the system on the output")
+    confidence: float = Field(ge=0, le=10, description="confidence level of the system on the output")
     
 
     if ConfigDict is None:  # Pydantic v1 fallback
@@ -147,27 +143,14 @@ class SummarizeRequest(BaseModel):
     text: NonEmptyStr
 
 
-class SummarizeResponse(BaseModel):
-    summary: NonEmptyStr
-    key_points: list[NonEmptyStr] = Field(default_factory=list)
-
-
 class AnalyzeRequest(BaseModel):
     text: NonEmptyStr
 
-class AnalyzeResponse(BaseModel):
-    sentiment: list[NonEmptyStr] = Field(default_factory=list)
-    topics: list[NonEmptyStr] = Field(default_factory=list)
-    confidence: float
 # ---- Endpoint ----
 
-@app.post("/summarize", response_model=SummarizeResponse)
-def summarize(request: SummarizeRequest) -> SummarizeResponse:
-    return summarize_v1(request)
 
-
-@app.post("/v1/summarize", response_model=SummarizeResponse)
-def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
+@app.post("/summarize", response_model=SummarizeOutput)
+def summarize(request: SummarizeRequest) -> SummarizeOutput:
 
     request_id = _new_request_id()
     start = time.perf_counter()
@@ -241,8 +224,8 @@ def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
         #Parse JSON (fallback if needed)
         try:
             parsed = json.loads(content)
-        except json.JSONDecodeError:
-            parsed = {"summary": content.strip(), "key_points": []}
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=502, detail="Model returned non-JSON output") from e
 
 
         try:
@@ -279,7 +262,7 @@ def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
             }
         })
 
-        return SummarizeResponse(summary=validated.summary, key_points=validated.key_points)
+        return SummarizeOutput(summary=validated.summary, key_points=validated.key_points)
 
 
     except HTTPException as e:
@@ -295,7 +278,7 @@ def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
         })
         raise
 
-    except openai.OpenAIError as e:
+    except OpenAIError as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
         _log_exception_json(error_logger, {
             "ts": _now_iso(),
@@ -327,8 +310,8 @@ def summarize_v1(request: SummarizeRequest) -> SummarizeResponse:
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/analyze", response_model=AnalyzeResponse)
-def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
+@app.post("/analyze", response_model=AnalysisOutput)
+def analyze(request: AnalyzeRequest) -> AnalysisOutput:
 
     request_id = _new_request_id()
     start = time.perf_counter()
@@ -407,9 +390,8 @@ def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         #Parse JSON (fallback if needed)
         try:
             parsed = json.loads(content)
-        except json.JSONDecodeError:
-            parsed = {"sentiment": ["unknown"], "topics": [], "confidence": 0}
-
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=502, detail="Model returned non-JSON output") from e
 
         try:
             if hasattr(AnalysisOutput, "model_validate"):   # Pydantic v2
@@ -446,7 +428,7 @@ def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
             }
         })  
 
-        return AnalyzeResponse(sentiment=validated.sentiment, topics=validated.topics, confidence=validated.confidence)
+        return AnalysisOutput(sentiment=validated.sentiment, topics=validated.topics, confidence=validated.confidence)
 
 
     except HTTPException as e:
@@ -462,7 +444,7 @@ def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         })
         raise
 
-    except openai.OpenAIError as e:
+    except OpenAIError as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
         _log_exception_json(error_logger, {
             "ts": _now_iso(),
