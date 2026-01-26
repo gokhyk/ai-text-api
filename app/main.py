@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import json
-import logging
+
 import os
 import time
 import uuid
 
 from datetime import datetime, timezone
-from logging.handlers import RotatingFileHandler
+
 from typing import Any, Annotated
 
 from openai import OpenAIError
@@ -20,6 +20,11 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 import traceback
+import logging
+
+import fastapihelpers
+from callmodeljson import _call_model_json
+
 
 try:
     #pydantic v2
@@ -45,55 +50,9 @@ client = OpenAI()  # <-- CORRECT
 log_file = "open_api_log_file.txt"
 error_file = "open_api_error_file.txt"
 
-def _new_request_id() -> str:
-    return uuid.uuid4().hex
+reqres_logger = fastapihelpers._setup_jsonl_logger("openai.reqres", log_file, logging.INFO)
+error_logger = fastapihelpers._setup_jsonl_logger("openai.error", error_file, logging.ERROR)
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-def _text_preview(text: str, limit: int = 1000) -> str:
-    text = text or ""
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"...[truncated, len={len(text)}]"
-
-def _setup_jsonl_logger(name: str, path: str, level: int) -> logging.Logger:
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    logger.propagate = False
-    if not logger.handlers:
-        handler = RotatingFileHandler(path, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
-        handler.setLevel(level)
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        logger.addHandler(handler)
-    return logger    
-
-reqres_logger = _setup_jsonl_logger("openai.reqres", log_file, logging.INFO)
-error_logger = _setup_jsonl_logger("openai.error", error_file, logging.ERROR)
-
-def _log_json(logger: logging.Logger, payload: dict[str, Any], level: int = logging.INFO) -> None:
-    logger.info(json.dumps(payload, ensure_ascii=False))
-
-def _exception_to_dict(e: Exception) -> dict[str, Any]:
-    te = traceback.TracebackException.from_exception(e)
-    return {
-        "type": type(e).__name__,
-        "message": str(e),
-        "stack": [
-            {
-                "file": f.filename,
-                "line": f.lineno,
-                "func": f.name,
-                "code": (f.line or "").strip(),
-            }
-            for f in te.stack
-        ],
-    }
-
-def _log_exception_json(logger: logging.Logger, payload: dict[str, Any]) -> None:
-    payload = dict(payload)
-    payload["traceback"] = traceback.format_exc()
-    logger.error(json.dumps(payload, ensure_ascii=False))
 
 
 # ----------------------------
@@ -147,7 +106,140 @@ class AnalyzeRequest(BaseModel):
     text: NonEmptyStr
 
 # ---- Endpoint ----
+from typing import Type, TypeVar
 
+T = TypeVar("T", bound=BaseModel)
+
+def model_call_helper(ModelClass: Type[T], response_format: dict,
+                      system_prompt: dict, text: str, model: str) -> T:
+    
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[system_prompt, {"role": "user", "content": text}],
+            response_format=response_format,
+        )
+
+        content = response.choices[0].message.content
+        if not content:
+            raise HTTPException(status_code=502, detail="Model returned no content")
+                                
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=502, detail="Model returned non-JSON output") from e
+        
+        try:
+            if hasattr(ModelClass, "model validate"):
+                validated = ModelClass.model_validate(parsed)
+            else: #Pydantic v1
+                validated=ModelClass.parse_obj(parsed)
+        except ValidationError as e:
+            error_logger.exception(json.dumps({
+                "event": "schema_validation_failed",
+                "error": str(e),
+                "raw_content_preview": _text_preview(content, 500),
+            }, ensure_ascii=False))
+            raise HTTPException(status_code=502, detail="Model returned invalid structured output")
+    
+        return validated
+    
+    except HTTPException:
+        #IMPORTANT: don't swallow your oHTTP errors
+        raise
+
+    except OpenAIError as e:
+        _log_exception_json(error_logger, {
+            "event": "model_call.fail",
+            "status_code": 502,
+            "error_type": "openai",
+            "error": str(e),
+            "text_len": len(text),
+            "text_preview": _text_preview(text),
+        })
+        raise HTPPException(status_code=502, detail="Upstream model request failed")
+
+    #         model = model,
+    #         messages = [system_prompt, {"role": "user", "content": text}],
+    #         response_format = schema_dict
+    #     )
+
+    #     openai_response_id = getattr(response, "id", None)
+    #     openai_request_id = getattr(response, "_request_id", None)
+
+    #     content = response.choices[0].message.content
+    #     if not content:
+    #         raise HTTPException(status_code=502, detail="Model return no content")
+        
+
+    #     #Parse JSON (fallback if needed)
+    #     try:
+    #         parsed = json.loads(content)
+    #     except json.JSONDecodeError as e:
+    #         raise HTTPException(status_code=502, detail="Model returned non-JSON output") from e
+
+    #     try:
+    #         if hasattr(schema_name, "model_validate"):   # Pydantic v2
+    #             validated = schema_name.model_validate(parsed)
+    #         else:  # Pydantic v1
+    #             validated = schema_name.parse_obj(parsed)
+    #     except ValidationError as e:
+    #         error_logger.exception(json.dumps({
+    #             #"ts": _now_iso(),
+    #             "event": "schema_validation_failed",
+    #             "error": str(e),
+    #             "raw_content_preview": _text_preview(content, 500),
+    #         }, ensure_ascii=False))
+    #         raise HTTPException(status_code=502, detail="Model returned invalid structured output")
+        
+    # except Exception as e:
+    #     #latency_ms = round((time.perf_counter() - start) * 1000, 2)
+    #     _log_exception_json(error_logger, {
+    #         #"ts": _now_iso(),
+    #         "event": "summarize.fail",
+    #         #"request_id": request_id,
+    #         "status_code": 500,
+    #         #"latency_ms": latency_ms,
+    #         "error_type": type(e).__name__,
+    #         "error": str(e),
+    #         "text_len": len(text),
+    #         "text_preview": _text_preview(text),
+    #     })
+    #     raise HTTPException(status_code=500, detail="Internal server error")
+    
+    # return SummarizeOutput(summary=validated.summary, key_points=validated.key_points)
+
+SUMMARY_SCHEMA =  {
+                "type": "object",
+                    "properties": {
+                    "summary": {"type": "string"},
+                    "key_points": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["summary", "key_points"],
+                "additionalProperties": False,
+            }
+
+@app.post("/summy", response_model=SummarizeOutput)
+def summy(request: SummarizeRequest) -> SummarizeOutput:
+    text = (request.text or "").strip()
+    #schema_name = SummarizeOutput
+
+    # system_prompt = {
+    #                 "role": "system",
+    #                 "content": "Summarize the following text clearly and concisely and provide key points."
+    #             }
+    system_prompt = "Summarize the following text clearly and concisely and provide key points."
+    model="gpt-5-nano"
+    so = _call_model_json(client=client,
+                          ModelClass=SummarizeOutput, 
+                          schema_name="summary_schema",
+                          schema_dict=SUMMARY_SCHEMA,
+                          system_prompt=system_prompt, 
+                          text=text, 
+                          model=model, 
+                          error_logger=error_logger)
+
+    return so
 
 @app.post("/summarize", response_model=SummarizeOutput)
 def summarize(request: SummarizeRequest) -> SummarizeOutput:
