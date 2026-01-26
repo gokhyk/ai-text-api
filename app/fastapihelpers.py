@@ -4,6 +4,7 @@ from typing import Any, Annotated
 from datetime import datetime, timezone
 import traceback
 import json
+import uuid
 
 
 def _new_request_id() -> str:
@@ -20,7 +21,7 @@ def _text_preview(text: str, limit: int = 1000) -> str:
 
 def _setup_jsonl_logger(name: str, path: str, level: int) -> logging.Logger:
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    #logger.setLevel(level)
     logger.propagate = False
     if not logger.handlers:
         handler = RotatingFileHandler(path, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
@@ -53,4 +54,4 @@ def _log_exception_json(logger: logging.Logger, payload: dict[str, Any]) -> None
     logger.error(json.dumps(payload, ensure_ascii=False))
 
 def _log_json(logger: logging.Logger, payload: dict[str, Any], level: int = logging.INFO) -> None:
-    logger.info(json.dumps(payload, ensure_ascii=False))
+    logger.log(level, json.dumps(payload, ensure_ascii=False))

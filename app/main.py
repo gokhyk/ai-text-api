@@ -5,7 +5,7 @@ import json
 
 import os
 import time
-import uuid
+
 
 from datetime import datetime, timezone
 
@@ -76,7 +76,7 @@ class SummarizeOutput(BaseModel):
         class Config:
             extra = "forbid"
 
-class AnalysisOutput(BaseModel):
+class AnalyzeOutput(BaseModel):
     """Structured output expected from the model."""
 
     if ConfigDict is not None:
@@ -109,38 +109,21 @@ SUMMARY_SCHEMA =  {
                 "additionalProperties": False,
             }
 
-@app.post("/summy", response_model=SummarizeOutput)
-def summy(request: SummarizeRequest) -> SummarizeOutput:
-    text = (request.text or "").strip()
-    #schema_name = SummarizeOutput
-
-    # system_prompt = {
-    #                 "role": "system",
-    #                 "content": "Summarize the following text clearly and concisely and provide key points."
-    #             }
-    system_prompt = "Summarize the following text clearly and concisely and provide key points."
-    model="gpt-5-nano"
-    so = _call_model_json(client=client,
-                          ModelClass=SummarizeOutput, 
-                          schema_name="summary_schema",
-                          schema_dict=SUMMARY_SCHEMA,
-                          system_prompt=system_prompt, 
-                          text=text, 
-                          model=model, 
-                          error_logger=error_logger)
-
-    return so
 
 @app.post("/summarize", response_model=SummarizeOutput)
 def summarize(request: SummarizeRequest) -> SummarizeOutput:
-
-    request_id = _new_request_id()
-    start = time.perf_counter()
+    fastapihelpers._log_json(reqres_logger, {
+        "ts": fastapihelpers._now_iso(),
+        "event": "summarize.called",
+    })
+    start = time.perf_counter()   
+    model="gpt-5-nano"    
+    request_id = fastapihelpers._new_request_id()
 
     text = (request.text or "").strip()
     if not text:
-        _log_json(reqres_logger, {
-            "ts": _now_iso(),
+        fastapihelpers._log_json(reqres_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "summarize.fail",
             "request_id": request_id,
             "status_code": 400,
@@ -148,86 +131,33 @@ def summarize(request: SummarizeRequest) -> SummarizeOutput:
             "error": "Text cannot be empty",
         })
         raise HTTPException(status_code=400, detail="Text cannot be empty")
-    
-    _log_json(reqres_logger, {
-        "ts": _now_iso(),
-        "event": "summarize.called",
-        "text_len": len(text),  })
-        
-    _log_json(reqres_logger, {
-        "ts": _now_iso(),
+
+    fastapihelpers._log_json(reqres_logger, {
+        "ts": fastapihelpers._now_iso(),
         "event": "summarize.start",
         "request_id": request_id,
         "text_len": len(text),
-        "text_preview": _text_preview(text),
-        "model": "gpt-5-nano",
+        "text_preview": fastapihelpers._text_preview(text),
+        "model": model,
     })
 
+    system_prompt = "Summarize the following text clearly and concisely and provide key points."
     try:
-        response = client.chat.completions.create(
-            model="gpt-5-nano",
-            #model="this-model-does-not-exist",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Summarize the following text clearly and concisely and provide key points."
-                },
-                {
-                    "role": "user",
-                    "content": text
-                }
-            ],
-            response_format= {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "summary_schema",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                        "summary": {"type": "string"},
-                        "key_points": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "required": ["summary", "key_points"],
-                    "additionalProperties": False,
-                    },
-                },
-            },
-        )
+        validated_response = _call_model_json(client=client,
+                           ModelClass=SummarizeOutput, 
+                           schema_name="summary_schema",
+                           schema_dict=SUMMARY_SCHEMA,
+                           system_prompt=system_prompt, 
+                           text=text, 
+                           model=model, 
+                           error_logger=error_logger)
 
-        openai_response_id = getattr(response, "id", None)
-        openai_request_id = getattr(response, "_request_id", None)
-
-        content = response.choices[0].message.content
-        if not content:
-            raise HTTPException(status_code=502, detail="Model return no content")
-        
-
-        #Parse JSON (fallback if needed)
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=502, detail="Model returned non-JSON output") from e
-
-
-        try:
-            if hasattr(SummarizeOutput, "model_validate"):   # Pydantic v2
-                validated = SummarizeOutput.model_validate(parsed)
-            else:  # Pydantic v1
-                validated = SummarizeOutput.parse_obj(parsed)
-        except ValidationError as e:
-            error_logger.exception(json.dumps({
-                "ts": _now_iso(),
-                "event": "schema_validation_failed",
-                "error": str(e),
-                "raw_content_preview": _text_preview(content, 500),
-            }, ensure_ascii=False))
-            raise HTTPException(status_code=502, detail="Model returned invalid structured output")
-
+        openai_response_id = getattr(validated_response, "id", None)
+        openai_request_id = getattr(validated_response, "_request_id", None)
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
 
-        _log_json(reqres_logger, {
-            "ts": _now_iso(),
+        fastapihelpers._log_json(reqres_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "summarize.success",
             "request_id": request_id,
             "status_code": 200,
@@ -235,22 +165,21 @@ def summarize(request: SummarizeRequest) -> SummarizeOutput:
             "openai": {
                 "response_id": openai_response_id,
                 "request_id": openai_request_id,
-                "model": "gpt-5-nano",
+                "model": model,
             },
             "result" : {
-                "summary_len": len(validated.summary),
-                "key_points_count": len(validated.key_points)
+                "summary_len": len(validated_response.summary),
+                "key_points_count": len(validated_response.key_points)
             
             }
         })
 
-        return SummarizeOutput(summary=validated.summary, key_points=validated.key_points)
-
+        return SummarizeOutput(summary=validated_response.summary, key_points=validated_response.key_points)
 
     except HTTPException as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        _log_exception_json(error_logger, {
-            "ts": _now_iso(),
+        fastapihelpers._log_exception_json(error_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "summarize.fail",
             "request_id": request_id,
             "status_code": e.status_code,
@@ -262,8 +191,8 @@ def summarize(request: SummarizeRequest) -> SummarizeOutput:
 
     except OpenAIError as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        _log_exception_json(error_logger, {
-            "ts": _now_iso(),
+        fastapihelpers._log_exception_json(error_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "summarize.fail",
             "request_id": request_id,
             "status_code": 502,
@@ -271,15 +200,14 @@ def summarize(request: SummarizeRequest) -> SummarizeOutput:
             "error_type": "openai",
             "error": str(e),
             "text_len": len(text),
-            "text_preview": _text_preview(text),
+            "text_preview": fastapihelpers._text_preview(text),
         })
         raise HTTPException(status_code=502, detail="Upstream model request failed")
 
-
     except Exception as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        _log_exception_json(error_logger, {
-            "ts": _now_iso(),
+        fastapihelpers._log_exception_json(error_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "summarize.fail",
             "request_id": request_id,
             "status_code": 500,
@@ -287,20 +215,35 @@ def summarize(request: SummarizeRequest) -> SummarizeOutput:
             "error_type": type(e).__name__,
             "error": str(e),
             "text_len": len(text),
-            "text_preview": _text_preview(text),
+            "text_preview": fastapihelpers._text_preview(text),
         })
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.post("/analyze", response_model=AnalysisOutput)
-def analyze(request: AnalyzeRequest) -> AnalysisOutput:
+ANALYZE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "sentiment": {"type": "array", "items": {"type": "string"}},
+        "topics": {"type": "array", "items": {"type": "string"}},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 10},
+    },
+    "required": ["sentiment", "topics", "confidence"],
+    "additionalProperties": False,
+}
 
-    request_id = _new_request_id()
-    start = time.perf_counter()
+@app.post("/analyze", response_model=AnalyzeOutput)
+def analyze(request: AnalyzeRequest) -> AnalyzeOutput:
+    fastapihelpers._log_json(reqres_logger, {
+        "ts": fastapihelpers._now_iso(),
+        "event": "analyze.called",
+    })
+    start = time.perf_counter()   
+    model="gpt-5-nano"    
+    request_id = fastapihelpers._new_request_id()
 
     text = (request.text or "").strip()
     if not text:
-        _log_json(reqres_logger, {
-            "ts": _now_iso(),
+        fastapihelpers._log_json(reqres_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "analyze.fail",
             "request_id": request_id,
             "status_code": 400,
@@ -308,90 +251,39 @@ def analyze(request: AnalyzeRequest) -> AnalysisOutput:
             "error": "Text cannot be empty",
         })
         raise HTTPException(status_code=400, detail="Text cannot be empty")
-    
-    _log_json(reqres_logger, {
-        "ts": _now_iso(),
-        "event": "analyze.called",
-        "text_len": len(text),  })
-        
-    _log_json(reqres_logger, {
-        "ts": _now_iso(),
+
+    fastapihelpers._log_json(reqres_logger, {
+        "ts": fastapihelpers._now_iso(),
         "event": "analyze.start",
         "request_id": request_id,
         "text_len": len(text),
-        "text_preview": _text_preview(text),
-        "model": "gpt-5-nano",
+        "text_preview": fastapihelpers._text_preview(text),
+        "model": model,
     })
 
+    system_prompt = """Analyze the text.Return JSON with: 
+                    - sentiment: array of strings (e.g. [\"positive\", \"cheerful\", \"happy\"])
+                    - topics: array of strings
+                    -confidence: number from 0 to 10
+                    Return only valid JSON
+                    """
     try:
-        response = client.chat.completions.create(
-            model="gpt-5-nano",
-            #model="this-model-does-not-exist",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Analyze the text.Return JSON with: \n"
-                    ' - sentiment: array of strings (e.g. ["positive", "cheerful", "happy"])\n'
-                    "- topics: array of strings\n"
-                    "-confidence: number from 0 to 10\n"
-                    "Return only valid JSON"
-                },
-                {
-                    "role": "user",
-                    "content": text
-                }
-            ],
-            response_format= {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "analyze_schema",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                        "sentiment": {"type": "array", "items": {"type": "string"}},
-                        "topics": {"type": "array", "items": {"type": "string"}},
-                        "confidence": {"type": "number", "minimum": 0, "maximum": 10}
-                    },
-                    "required": ["sentiment", "topics", "confidence"],
-                    "additionalProperties": False,
-                    },
-                },
-            },
-        )
+        validated_response = _call_model_json(client=client,
+                    ModelClass=AnalyzeOutput, 
+                    schema_name="analyze_schema",
+                    schema_dict=ANALYZE_SCHEMA,
+                    system_prompt=system_prompt, 
+                    text=text, 
+                    model=model, 
+                    error_logger=error_logger)
 
-        openai_response_id = getattr(response, "id", None)
-        openai_request_id = getattr(response, "_request_id", None)
-
-        content = response.choices[0].message.content
-        if not content:
-            raise HTTPException(status_code=502, detail="Model return no content")
-        
-
-        #Parse JSON (fallback if needed)
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=502, detail="Model returned non-JSON output") from e
-
-        try:
-            if hasattr(AnalysisOutput, "model_validate"):   # Pydantic v2
-                validated = AnalysisOutput.model_validate(parsed)
-            else:  # Pydantic v1
-                validated = AnalysisOutput.parse_obj(parsed)
-        except ValidationError as e:
-            error_logger.exception(json.dumps({
-                "ts": _now_iso(),
-                "event": "schema_validation_failed",
-                "error": str(e),
-                "raw_content_preview": _text_preview(content, 500),
-            }, ensure_ascii=False))
-            raise HTTPException(status_code=502, detail="Model returned invalid structured output")
-
+        openai_response_id = getattr(validated_response, "id", None)
+        openai_request_id = getattr(validated_response, "_request_id", None)
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
 
-        _log_json(reqres_logger, {
-            "ts": _now_iso(),
+
+        fastapihelpers._log_json(reqres_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "analyze.success",
             "request_id": request_id,
             "status_code": 200,
@@ -399,23 +291,25 @@ def analyze(request: AnalyzeRequest) -> AnalysisOutput:
             "openai": {
                 "response_id": openai_response_id,
                 "request_id": openai_request_id,
-                "model": "gpt-5-nano",
+                "model": model,
             },
             "result" : {
-                "sentiment_count": len(validated.sentiment),
-                "topics_count": len(validated.topics),
-                "confidence": validated.confidence
+                "sentiment_count": len(validated_response.sentiment),
+                "topics_count": len(validated_response.topics),
+                "confidence": validated_response.confidence
             
             }
         })  
 
-        return AnalysisOutput(sentiment=validated.sentiment, topics=validated.topics, confidence=validated.confidence)
+        return AnalyzeOutput(sentiment=validated_response.sentiment, 
+                              topics=validated_response.topics, 
+                              confidence=validated_response.confidence)
 
 
     except HTTPException as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        _log_exception_json(error_logger, {
-            "ts": _now_iso(),
+        fastapihelpers._log_exception_json(error_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "analyze.fail",
             "request_id": request_id,
             "status_code": e.status_code,
@@ -427,8 +321,8 @@ def analyze(request: AnalyzeRequest) -> AnalysisOutput:
 
     except OpenAIError as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        _log_exception_json(error_logger, {
-            "ts": _now_iso(),
+        fastapihelpers._log_exception_json(error_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "analyze.fail",
             "request_id": request_id,
             "status_code": 502,
@@ -436,15 +330,15 @@ def analyze(request: AnalyzeRequest) -> AnalysisOutput:
             "error_type": "openai",
             "error": str(e),
             "text_len": len(text),
-            "text_preview": _text_preview(text),
+            "text_preview": fastapihelpers._text_preview(text),
         })
         raise HTTPException(status_code=502, detail="Upstream model request failed")
 
 
     except Exception as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        _log_exception_json(error_logger, {
-            "ts": _now_iso(),
+        fastapihelpers._log_exception_json(error_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "analyze.fail",
             "request_id": request_id,
             "status_code": 500,
@@ -452,7 +346,7 @@ def analyze(request: AnalyzeRequest) -> AnalysisOutput:
             "error_type": type(e).__name__,
             "error": str(e),
             "text_len": len(text),
-            "text_preview": _text_preview(text),
+            "text_preview": fastapihelpers._text_preview(text),
         })
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -487,8 +381,8 @@ def favicon():
 
 @app.get("/log-test")
 def log_test():
-    _log_json(
+    fastapihelpers._log_json(
         reqres_logger,
-        {"ts": _now_iso(), "event": "log_test", "ok": True}
+        {"ts": fastapihelpers._now_iso(), "event": "log_test", "ok": True}
     )
     return {"status": "logged"}

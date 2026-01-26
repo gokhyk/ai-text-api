@@ -101,23 +101,11 @@ def _call_model_json(
                 "request_id": request_id,
                 "model": model,
                 "schema_name": schema_name,
-                "raw_content_preview": _text_preview(content, 500),
+                "raw_content_preview": fastapihelpers._text_preview(content, 500),
                 "error_type": type(e).__name__,
                 "error": str(e),
             })
             raise HTTPException(status_code=502, detail="Model returned invalid structured output")
-    
-      # Success log (optional but helpful)
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        fastapihelpers._log_json(reqres_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": f"{event_prefix}.success",
-            "request_id": request_id,
-            "status_code": 200,
-            "latency_ms": latency_ms,
-            "model": model,
-            "schema_name": schema_name,
-        })
 
         return validated
 
@@ -126,33 +114,7 @@ def _call_model_json(
         raise
 
     except OpenAIError as e:
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        fastapihelpers._log_exception_json(error_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": f"{event_prefix}.openai_fail",
-            "request_id": request_id,
-            "status_code": 502,
-            "latency_ms": latency_ms,
-            "model": model,
-            "schema_name": schema_name,
-            "error_type": "openai",
-            "error": str(e),
-            "text_len": len(text),
-        })
         raise HTTPException(status_code=502, detail="Upstream model request failed")
 
     except Exception as e:
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        fastapihelpers._log_exception_json(error_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": f"{event_prefix}.internal_fail",
-            "request_id": request_id,
-            "status_code": 500,
-            "latency_ms": latency_ms,
-            "model": model,
-            "schema_name": schema_name,
-            "error_type": type(e).__name__,
-            "error": str(e),
-            "text_len": len(text),
-        })
         raise HTTPException(status_code=500, detail="Internal server error")
