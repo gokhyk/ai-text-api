@@ -91,13 +91,6 @@ class AnalysisOutput(BaseModel):
         class Config:
             extra = "forbid"
 
-# ---- Request / Response Schemas ----
-
-# 1. Define the desired output structure using Pydantic
-#class AnalysisOutput(BaseModel):
-#    summary: str = Field(description="A concise summary of the text.")
-#    key_points: list[str] = Field(description="A bulleted list of the most important points.")
-
 class SummarizeRequest(BaseModel):
     text: NonEmptyStr
 
@@ -105,109 +98,6 @@ class SummarizeRequest(BaseModel):
 class AnalyzeRequest(BaseModel):
     text: NonEmptyStr
 
-# ---- Endpoint ----
-from typing import Type, TypeVar
-
-T = TypeVar("T", bound=BaseModel)
-
-def model_call_helper(ModelClass: Type[T], response_format: dict,
-                      system_prompt: dict, text: str, model: str) -> T:
-    
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[system_prompt, {"role": "user", "content": text}],
-            response_format=response_format,
-        )
-
-        content = response.choices[0].message.content
-        if not content:
-            raise HTTPException(status_code=502, detail="Model returned no content")
-                                
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=502, detail="Model returned non-JSON output") from e
-        
-        try:
-            if hasattr(ModelClass, "model validate"):
-                validated = ModelClass.model_validate(parsed)
-            else: #Pydantic v1
-                validated=ModelClass.parse_obj(parsed)
-        except ValidationError as e:
-            error_logger.exception(json.dumps({
-                "event": "schema_validation_failed",
-                "error": str(e),
-                "raw_content_preview": _text_preview(content, 500),
-            }, ensure_ascii=False))
-            raise HTTPException(status_code=502, detail="Model returned invalid structured output")
-    
-        return validated
-    
-    except HTTPException:
-        #IMPORTANT: don't swallow your oHTTP errors
-        raise
-
-    except OpenAIError as e:
-        _log_exception_json(error_logger, {
-            "event": "model_call.fail",
-            "status_code": 502,
-            "error_type": "openai",
-            "error": str(e),
-            "text_len": len(text),
-            "text_preview": _text_preview(text),
-        })
-        raise HTPPException(status_code=502, detail="Upstream model request failed")
-
-    #         model = model,
-    #         messages = [system_prompt, {"role": "user", "content": text}],
-    #         response_format = schema_dict
-    #     )
-
-    #     openai_response_id = getattr(response, "id", None)
-    #     openai_request_id = getattr(response, "_request_id", None)
-
-    #     content = response.choices[0].message.content
-    #     if not content:
-    #         raise HTTPException(status_code=502, detail="Model return no content")
-        
-
-    #     #Parse JSON (fallback if needed)
-    #     try:
-    #         parsed = json.loads(content)
-    #     except json.JSONDecodeError as e:
-    #         raise HTTPException(status_code=502, detail="Model returned non-JSON output") from e
-
-    #     try:
-    #         if hasattr(schema_name, "model_validate"):   # Pydantic v2
-    #             validated = schema_name.model_validate(parsed)
-    #         else:  # Pydantic v1
-    #             validated = schema_name.parse_obj(parsed)
-    #     except ValidationError as e:
-    #         error_logger.exception(json.dumps({
-    #             #"ts": _now_iso(),
-    #             "event": "schema_validation_failed",
-    #             "error": str(e),
-    #             "raw_content_preview": _text_preview(content, 500),
-    #         }, ensure_ascii=False))
-    #         raise HTTPException(status_code=502, detail="Model returned invalid structured output")
-        
-    # except Exception as e:
-    #     #latency_ms = round((time.perf_counter() - start) * 1000, 2)
-    #     _log_exception_json(error_logger, {
-    #         #"ts": _now_iso(),
-    #         "event": "summarize.fail",
-    #         #"request_id": request_id,
-    #         "status_code": 500,
-    #         #"latency_ms": latency_ms,
-    #         "error_type": type(e).__name__,
-    #         "error": str(e),
-    #         "text_len": len(text),
-    #         "text_preview": _text_preview(text),
-    #     })
-    #     raise HTTPException(status_code=500, detail="Internal server error")
-    
-    # return SummarizeOutput(summary=validated.summary, key_points=validated.key_points)
 
 SUMMARY_SCHEMA =  {
                 "type": "object",
@@ -401,7 +291,6 @@ def summarize(request: SummarizeRequest) -> SummarizeOutput:
         })
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 @app.post("/analyze", response_model=AnalysisOutput)
 def analyze(request: AnalyzeRequest) -> AnalysisOutput:
 
@@ -566,8 +455,6 @@ def analyze(request: AnalyzeRequest) -> AnalysisOutput:
             "text_preview": _text_preview(text),
         })
         raise HTTPException(status_code=500, detail="Internal server error")
-
-     
 
 @app.get("/")
 def root():
