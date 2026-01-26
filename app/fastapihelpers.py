@@ -55,3 +55,20 @@ def _log_exception_json(logger: logging.Logger, payload: dict[str, Any]) -> None
 
 def _log_json(logger: logging.Logger, payload: dict[str, Any], level: int = logging.INFO) -> None:
     logger.log(level, json.dumps(payload, ensure_ascii=False))
+
+
+def setup_logging():
+    logging.basicConfig(level=logging.INFO)
+
+    request_handler = RotatingFileHandler(
+        "requests.log",
+        maxBytes=5_000_000,
+        backupCount=5
+    )
+
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s"
+    )
+    request_handler.setFormatter(formatter)
+
+    logging.getLogger("request").addHandler(request_handler)

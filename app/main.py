@@ -5,6 +5,7 @@ import json
 
 import os
 import time
+import uuid
 
 
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ from typing import Any, Annotated
 from openai import OpenAIError
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from openai import OpenAI
 from pydantic import BaseModel, Field
@@ -24,6 +25,7 @@ import logging
 
 import fastapihelpers
 from callmodeljson import _call_model_json
+#import loggingmiddleware
 
 
 try:
@@ -52,7 +54,7 @@ error_file = "open_api_error_file.txt"
 
 reqres_logger = fastapihelpers._setup_jsonl_logger("openai.reqres", log_file, logging.INFO)
 error_logger = fastapihelpers._setup_jsonl_logger("openai.error", error_file, logging.ERROR)
-
+fastapihelpers.setup_logging()
 
 
 # ----------------------------
@@ -118,7 +120,7 @@ def summarize(request: SummarizeRequest) -> SummarizeOutput:
     })
     start = time.perf_counter()   
     model="gpt-5-nano"    
-    request_id = fastapihelpers._new_request_id()
+    request_id = get_request_id(request)
 
     text = (request.text or "").strip()
     if not text:
@@ -231,14 +233,14 @@ ANALYZE_SCHEMA = {
 }
 
 @app.post("/analyze", response_model=AnalyzeOutput)
-def analyze(request: AnalyzeRequest) -> AnalyzeOutput:
+def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeOutput:
     fastapihelpers._log_json(reqres_logger, {
         "ts": fastapihelpers._now_iso(),
         "event": "analyze.called",
     })
     start = time.perf_counter()   
     model="gpt-5-nano"    
-    request_id = fastapihelpers._new_request_id()
+    request_id = get_request_id(req)
 
     text = (request.text or "").strip()
     if not text:
@@ -252,14 +254,14 @@ def analyze(request: AnalyzeRequest) -> AnalyzeOutput:
         })
         raise HTTPException(status_code=400, detail="Text cannot be empty")
 
-    fastapihelpers._log_json(reqres_logger, {
-        "ts": fastapihelpers._now_iso(),
-        "event": "analyze.start",
-        "request_id": request_id,
-        "text_len": len(text),
-        "text_preview": fastapihelpers._text_preview(text),
-        "model": model,
-    })
+    # fastapihelpers._log_json(reqres_logger, {
+    #     "ts": fastapihelpers._now_iso(),
+    #     "event": "analyze.start",
+    #     "request_id": request_id,
+    #     "text_len": len(text),
+    #     "text_preview": fastapihelpers._text_preview(text),
+    #     "model": model,
+    # })
 
     system_prompt = """Analyze the text.Return JSON with: 
                     - sentiment: array of strings (e.g. [\"positive\", \"cheerful\", \"happy\"])
@@ -386,3 +388,79 @@ def log_test():
         {"ts": fastapihelpers._now_iso(), "event": "log_test", "ok": True}
     )
     return {"status": "logged"}
+
+
+""" @app.middleware("http")
+async def timing_middleware(request, call_next):
+
+    request_id = fastapihelpers.get_request_id()
+    text = (request.text or "").strip()
+    fastapihelpers._log_json(reqres_logger, {
+        "ts": fastapihelpers._now_iso(),
+        "event": "analyze.start",
+        "request_id": request_id,
+        "text_len": len(text),
+        "text_preview": fastapihelpers._text_preview(text),
+        "model": model,
+    })
+    start = time.perf_counter()
+    response = await call_next(request)
+    latency_ms = (time.perf_counter() - start) * 1000
+    #print(f"latency is {latency_ms}")
+    #log_request(request, latency_ms)
+    print(response)
+    return response
+
+    #request_id = fastapihelpers.get_request_id()
+    # fastapihelpers._log_json(reqres_logger, {
+    #     "ts": fastapihelpers._now_iso(),
+    #     "event": "analyze.start",
+    #     "request_id": request_id,
+    #     "text_len": len(text),
+    #     "text_preview": fastapihelpers._text_preview(text),
+    #     "model": model,
+    # }) """
+
+
+#logger = logging.getLogger("request")
+
+@app.middleware("http")
+async def timing_middleware(request: Request, call_next):
+    """
+    Global timing + request logging middleware.
+
+    This runs for EVERY HTTP request.
+    It wraps the entire request lifecycle:
+    - middleware
+    - dependencies
+    - endpoint
+    - response
+    """
+
+    start = time.perf_counter()
+    request.state.request_id = uuid.uuid4().hex
+
+    try:
+        # Continue processing the request
+        response = await call_next(request)
+
+        return response
+
+    finally:
+        # This ALWAYS runs — success or exception
+        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+
+        logging.getLogger("request").info({
+            "event": "http.request",
+            "request_id": request.state.request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": getattr(
+                locals().get("response", None), "status_code", None
+            ),
+            "latency_ms": latency_ms,
+            "client": request.client.host if request.client else None,
+        })
+
+def get_request_id(request: Request) -> str:
+    return request.state.request_id

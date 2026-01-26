@@ -1,0 +1,4 @@
+2026-01-26 14:28:13,150 INFO request {'event': 'http.request', 'request_id': '8dc17445ebae4a96b8f33b656cb8f44b', 'method': 'POST', 'path': '/analyze', 'status_code': 200, 'latency_ms': 12778.96, 'client': '127.0.0.1'}
+2026-01-26 14:47:34,173 INFO request {'event': 'http.request', 'request_id': '4016b855cadf441487e2a89fa7637f32', 'method': 'POST', 'path': '/analyze', 'status_code': None, 'latency_ms': 1.83, 'client': '127.0.0.1'}
+2026-01-26 14:48:35,092 INFO request {'event': 'http.request', 'request_id': 'a0a7acd6b6f24db9ae38b8083d804036', 'method': 'POST', 'path': '/analyze', 'status_code': None, 'latency_ms': 1.99, 'client': '127.0.0.1'}
+2026-01-26 15:05:59,863 INFO request {'event': 'http.request', 'request_id': '4f0597326e0c47d89f314d9cc8dfcb46', 'method': 'POST', 'path': '/analyze', 'status_code': 200, 'latency_ms': 12258.32, 'client': '127.0.0.1'}
