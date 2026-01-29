@@ -57,21 +57,21 @@ def _log_json(logger: logging.Logger, payload: dict[str, Any], level: int = logg
     logger.log(level, json.dumps(payload, ensure_ascii=False))
 
 
-def setup_logging():
-    logging.basicConfig(level=logging.INFO)
+# def setup_logging():
+#     logging.basicConfig(level=logging.INFO)
 
-    request_handler = RotatingFileHandler(
-        "requests.log",
-        maxBytes=5_000_000,
-        backupCount=5
-    )
+#     request_handler = RotatingFileHandler(
+#         "requests.log",
+#         maxBytes=5_000_000,
+#         backupCount=5
+#     )
 
-    formatter = logging.Formatter(
-        "%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
-    request_handler.setFormatter(formatter)
+#     formatter = logging.Formatter(
+#         "%(asctime)s %(levelname)s %(name)s %(message)s"
+#     )
+#     request_handler.setFormatter(formatter)
 
-    logger = logging.getLogger("request")
-    logger.addHandler(request_handler)
-    logger.propagate = False
+#     logger = logging.getLogger("request")
+#     logger.addHandler(request_handler)
+#     logger.propagate = False
     
