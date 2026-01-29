@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar
+from typing import Any, Dict, Type, TypeVar, Optional
 from pydantic import BaseModel
 from fastapi import HTTPException
 from openai import OpenAIError
@@ -17,7 +17,7 @@ def _call_model_json(
         client: openai.OpenAI,
         ModelClass: Type[T],
         schema_name: str,
-        schema_dict: Dict[str, Any],
+        schema_dict: Optional[Dict[str, Any]] = None,
         system_prompt: str,
         text: str,
         model: str = "gpt-5-nano",
@@ -51,7 +51,9 @@ def _call_model_json(
     Call OpenAI chat.completions with JSON Schema response_format and validate result
     into ModelClass. Raises HTTPException on failure with consistent status codes.
     """
-    #print(type(client))
+
+    if schema_dict is None:
+        schema_dict = _openai_strictify_json_schema(pydantic_to_json_schema(ModelClass))
     start = time.perf_counter()
 
     if text is None or not text.strip():
@@ -114,7 +116,59 @@ def _call_model_json(
         raise
 
     except OpenAIError as e:
-        raise HTTPException(status_code=502, detail="Upstream model request failed")
+        fastapihelpers._log_exception_json(error_logger, {
+            "ts": fastapihelpers._now_iso(),
+            "event": f"{event_prefix}.openai_error",
+            "request_id": request_id,
+            "model": model,
+            "schema_name": schema_name,
+            "error_type": type(e).__name__,
+            "error": str(e),
+        })
+        raise HTTPException(status_code=502, detail=f"Upstream model request failed: {str(e)}")
+
 
     except Exception as e:
         raise HTTPException(status_code=500, detail="Internal server error")
+    
+
+
+# schema_utils.py (or inside callmodeljson.py / )
+def pydantic_to_json_schema(ModelClass: Type[BaseModel]) -> Dict[str, Any]:
+    """
+    Return a JSON Schema dict from a Pydantic model v1 or v2
+    """
+
+    #Pydantic v2
+    if hasattr(ModelClass, "model_json_schema"):
+        return ModelClass.model_json_schema()
+    #Pydantic v1
+    return ModelClass.schema()
+
+
+def _openai_strictify_json_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    OpenAI strict json_schema expects that for any object with properties,
+    'required' exists and includes every property key.
+    This walks the schema and enforces that rule.
+    """
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            # If it's an object schema with properties, enforce required
+            if node.get("type") == "object" and isinstance(node.get("properties"), dict):
+                props = node["properties"]
+                node["required"] = list(props.keys())
+                # OpenAI also likes this strictness
+                node.setdefault("additionalProperties", False)
+
+            # Recurse into dict values
+            for v in node.values():
+                walk(v)
+
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    schema = dict(schema)  # shallow copy
+    walk(schema)
+    return schema

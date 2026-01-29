@@ -143,14 +143,16 @@ def summarize(payload: SummarizeRequest, request: Request) -> SummarizeOutput:
 
     system_prompt = "Summarize the following text clearly and concisely and provide key points."
 
-    validated_response = _call_model_json(client=client,
-                        ModelClass=SummarizeOutput, 
-                        schema_name="summary_schema",
-                        schema_dict=SUMMARY_SCHEMA,
-                        system_prompt=system_prompt, 
-                        text=text, 
-                        model=model, 
-                        error_logger=error_logger)
+    validated_response = _call_model_json(
+            client=client,
+            ModelClass=SummarizeOutput, 
+            schema_name="summary_schema",
+            schema_dict=None,   #SUMMARY_SCHEMA,
+            system_prompt=system_prompt, 
+            text=text, 
+            model=model, 
+            error_logger=error_logger
+        )
 
         # openai_response_id = getattr(validated_response, "id", None)
         # openai_request_id = getattr(validated_response, "_request_id", None)
@@ -259,14 +261,15 @@ def analyze(payload: AnalyzeRequest, request: Request) -> AnalyzeOutput:
                     """
 
     validated_response = _call_model_json(
-            client=client,
-            ModelClass=AnalyzeOutput, 
-            schema_name="analyze_schema",
-            schema_dict=ANALYZE_SCHEMA,
-            system_prompt=system_prompt, 
-            text=text, 
-            model=model, 
-            error_logger=error_logger)
+        client=client,
+        ModelClass=AnalyzeOutput, 
+        schema_name="analyze_schema",
+        schema_dict=None,        #ANALYZE_SCHEMA,
+        system_prompt=system_prompt, 
+        text=text, 
+        model=model, 
+        error_logger=error_logger
+    )
 
     # openai_response_id = getattr(validated_response, "id", None)
     # openai_request_id = getattr(validated_response, "_request_id", None)

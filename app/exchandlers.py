@@ -1,13 +1,14 @@
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from openai import OpenAIError
+import fastapihelpers
 
 from core.fastapi_client import app
 
 @app.exception_handler(OpenAIError)
 async def openai_error_handler(request: Request, exc: OpenAIError):
     request_id = getattr(request.state, "request_id", None)
-
+    print("openai_error_handler")
     fastapihelpers._log_exception_json(error_logger, {
         "ts": fastapihelpers._now_iso(),
         "event": "error.openai",
