@@ -13,7 +13,7 @@ def _new_request_id() -> str:
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-def _text_preview(text: str, limit: int = 1000) -> str:
+def _text_preview(text: str, limit: int = 100) -> str:
     text = text or ""
     if len(text) <= limit:
         return text
@@ -71,4 +71,7 @@ def setup_logging():
     )
     request_handler.setFormatter(formatter)
 
-    logging.getLogger("request").addHandler(request_handler)
+    logger = logging.getLogger("request")
+    logger.addHandler(request_handler)
+    logger.propagate = False
+    

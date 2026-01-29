@@ -25,6 +25,7 @@ import logging
 
 import fastapihelpers
 from callmodeljson import _call_model_json
+#import exchandlers
 #import loggingmiddleware
 
 
@@ -40,22 +41,23 @@ try:
 except Exception:
     ValidationError = Exception
 
-load_dotenv()
-assert os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"
-
-app = FastAPI()
-client = OpenAI()  # <-- CORRECT
+#load_dotenv()
+#assert os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"
+#app = FastAPI()
+#client = OpenAI()  # <-- CORRECT
+from core.openai_client import client
+from core.fastapi_client import app
 
 # ----------------------------------
 # Logging 
 # ----------------------------------
+fastapihelpers.setup_logging()
+
 log_file = "open_api_log_file.txt"
 error_file = "open_api_error_file.txt"
 
 reqres_logger = fastapihelpers._setup_jsonl_logger("openai.reqres", log_file, logging.INFO)
 error_logger = fastapihelpers._setup_jsonl_logger("openai.error", error_file, logging.ERROR)
-fastapihelpers.setup_logging()
-
 
 # ----------------------------
 # Schemas
@@ -113,16 +115,12 @@ SUMMARY_SCHEMA =  {
 
 
 @app.post("/summarize", response_model=SummarizeOutput)
-def summarize(request: SummarizeRequest) -> SummarizeOutput:
-    fastapihelpers._log_json(reqres_logger, {
-        "ts": fastapihelpers._now_iso(),
-        "event": "summarize.called",
-    })
-    start = time.perf_counter()   
+def summarize(payload: SummarizeRequest, request: Request) -> SummarizeOutput:
+
     model="gpt-5-nano"    
     request_id = get_request_id(request)
 
-    text = (request.text or "").strip()
+    text = (payload.text or "").strip()
     if not text:
         fastapihelpers._log_json(reqres_logger, {
             "ts": fastapihelpers._now_iso(),
@@ -144,82 +142,76 @@ def summarize(request: SummarizeRequest) -> SummarizeOutput:
     })
 
     system_prompt = "Summarize the following text clearly and concisely and provide key points."
-    try:
-        validated_response = _call_model_json(client=client,
-                           ModelClass=SummarizeOutput, 
-                           schema_name="summary_schema",
-                           schema_dict=SUMMARY_SCHEMA,
-                           system_prompt=system_prompt, 
-                           text=text, 
-                           model=model, 
-                           error_logger=error_logger)
 
-        openai_response_id = getattr(validated_response, "id", None)
-        openai_request_id = getattr(validated_response, "_request_id", None)
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+    validated_response = _call_model_json(client=client,
+                        ModelClass=SummarizeOutput, 
+                        schema_name="summary_schema",
+                        schema_dict=SUMMARY_SCHEMA,
+                        system_prompt=system_prompt, 
+                        text=text, 
+                        model=model, 
+                        error_logger=error_logger)
 
-        fastapihelpers._log_json(reqres_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": "summarize.success",
-            "request_id": request_id,
-            "status_code": 200,
-            "latency_ms": latency_ms,
-            "openai": {
-                "response_id": openai_response_id,
-                "request_id": openai_request_id,
-                "model": model,
-            },
-            "result" : {
-                "summary_len": len(validated_response.summary),
-                "key_points_count": len(validated_response.key_points)
-            
-            }
-        })
+        # openai_response_id = getattr(validated_response, "id", None)
+        # openai_request_id = getattr(validated_response, "_request_id", None)
+        # latency_ms = round((time.perf_counter() - start) * 1000, 2)
 
-        return SummarizeOutput(summary=validated_response.summary, key_points=validated_response.key_points)
+    fastapihelpers._log_json(reqres_logger, {
+        "ts": fastapihelpers._now_iso(),
+        "event": "summarize.success",
+        "request_id": request_id,
+        "model": model,
+        "result" : {
+            "summary_len": len(validated_response.summary),
+            "key_points_count": len(validated_response.key_points)
+        
+        }
+    })
 
-    except HTTPException as e:
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        fastapihelpers._log_exception_json(error_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": "summarize.fail",
-            "request_id": request_id,
-            "status_code": e.status_code,
-            "latency_ms": latency_ms,
-            "error_type": "http_exception",
-            "detail": e.detail,
-        })
-        raise
+    return SummarizeOutput(summary=validated_response.summary, key_points=validated_response.key_points)
 
-    except OpenAIError as e:
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        fastapihelpers._log_exception_json(error_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": "summarize.fail",
-            "request_id": request_id,
-            "status_code": 502,
-            "latency_ms": latency_ms,
-            "error_type": "openai",
-            "error": str(e),
-            "text_len": len(text),
-            "text_preview": fastapihelpers._text_preview(text),
-        })
-        raise HTTPException(status_code=502, detail="Upstream model request failed")
+    # except HTTPException as e:
+    #     latency_ms = round((time.perf_counter() - start) * 1000, 2)
+    #     fastapihelpers._log_exception_json(error_logger, {
+    #         "ts": fastapihelpers._now_iso(),
+    #         "event": "summarize.fail",
+    #         "request_id": request_id,
+    #         "status_code": e.status_code,
+    #         "latency_ms": latency_ms,
+    #         "error_type": "http_exception",
+    #         "detail": e.detail,
+    #     })
+    #     raise
 
-    except Exception as e:
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        fastapihelpers._log_exception_json(error_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": "summarize.fail",
-            "request_id": request_id,
-            "status_code": 500,
-            "latency_ms": latency_ms,
-            "error_type": type(e).__name__,
-            "error": str(e),
-            "text_len": len(text),
-            "text_preview": fastapihelpers._text_preview(text),
-        })
-        raise HTTPException(status_code=500, detail="Internal server error")
+    # except OpenAIError as e:
+    #     latency_ms = round((time.perf_counter() - start) * 1000, 2)
+    #     fastapihelpers._log_exception_json(error_logger, {
+    #         "ts": fastapihelpers._now_iso(),
+    #         "event": "summarize.fail",
+    #         "request_id": request_id,
+    #         "status_code": 502,
+    #         "latency_ms": latency_ms,
+    #         "error_type": "openai",
+    #         "error": str(e),
+    #         "text_len": len(text),
+    #         "text_preview": fastapihelpers._text_preview(text),
+    #     })
+    #     raise HTTPException(status_code=502, detail="Upstream model request failed")
+
+    # except Exception as e:
+    #     latency_ms = round((time.perf_counter() - start) * 1000, 2)
+    #     fastapihelpers._log_exception_json(error_logger, {
+    #         "ts": fastapihelpers._now_iso(),
+    #         "event": "summarize.fail",
+    #         "request_id": request_id,
+    #         "status_code": 500,
+    #         "latency_ms": latency_ms,
+    #         "error_type": type(e).__name__,
+    #         "error": str(e),
+    #         "text_len": len(text),
+    #         "text_preview": fastapihelpers._text_preview(text),
+    #     })
+    #     raise HTTPException(status_code=500, detail="Internal server error")
 
 ANALYZE_SCHEMA = {
     "type": "object",
@@ -233,16 +225,12 @@ ANALYZE_SCHEMA = {
 }
 
 @app.post("/analyze", response_model=AnalyzeOutput)
-def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeOutput:
-    fastapihelpers._log_json(reqres_logger, {
-        "ts": fastapihelpers._now_iso(),
-        "event": "analyze.called",
-    })
-    start = time.perf_counter()   
+def analyze(payload: AnalyzeRequest, request: Request) -> AnalyzeOutput:
+ 
     model="gpt-5-nano"    
-    request_id = get_request_id(req)
+    request_id = get_request_id(request)
 
-    text = (request.text or "").strip()
+    text = (payload.text or "").strip()
     if not text:
         fastapihelpers._log_json(reqres_logger, {
             "ts": fastapihelpers._now_iso(),
@@ -254,14 +242,14 @@ def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeOutput:
         })
         raise HTTPException(status_code=400, detail="Text cannot be empty")
 
-    # fastapihelpers._log_json(reqres_logger, {
-    #     "ts": fastapihelpers._now_iso(),
-    #     "event": "analyze.start",
-    #     "request_id": request_id,
-    #     "text_len": len(text),
-    #     "text_preview": fastapihelpers._text_preview(text),
-    #     "model": model,
-    # })
+    fastapihelpers._log_json(reqres_logger, {
+        "ts": fastapihelpers._now_iso(),
+        "event": "analyze.start",
+        "request_id": request_id,
+        "text_len": len(text),
+        "text_preview": fastapihelpers._text_preview(text),
+        "model": model,
+    })
 
     system_prompt = """Analyze the text.Return JSON with: 
                     - sentiment: array of strings (e.g. [\"positive\", \"cheerful\", \"happy\"])
@@ -269,32 +257,27 @@ def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeOutput:
                     -confidence: number from 0 to 10
                     Return only valid JSON
                     """
-    try:
-        validated_response = _call_model_json(client=client,
-                    ModelClass=AnalyzeOutput, 
-                    schema_name="analyze_schema",
-                    schema_dict=ANALYZE_SCHEMA,
-                    system_prompt=system_prompt, 
-                    text=text, 
-                    model=model, 
-                    error_logger=error_logger)
 
-        openai_response_id = getattr(validated_response, "id", None)
-        openai_request_id = getattr(validated_response, "_request_id", None)
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+    validated_response = _call_model_json(
+            client=client,
+            ModelClass=AnalyzeOutput, 
+            schema_name="analyze_schema",
+            schema_dict=ANALYZE_SCHEMA,
+            system_prompt=system_prompt, 
+            text=text, 
+            model=model, 
+            error_logger=error_logger)
+
+    # openai_response_id = getattr(validated_response, "id", None)
+    # openai_request_id = getattr(validated_response, "_request_id", None)
+    # latency_ms = round((time.perf_counter() - start) * 1000, 2)
 
 
-        fastapihelpers._log_json(reqres_logger, {
+    fastapihelpers._log_json(reqres_logger, {
             "ts": fastapihelpers._now_iso(),
             "event": "analyze.success",
             "request_id": request_id,
-            "status_code": 200,
-            "latency_ms": latency_ms,
-            "openai": {
-                "response_id": openai_response_id,
-                "request_id": openai_request_id,
-                "model": model,
-            },
+            "model": model,
             "result" : {
                 "sentiment_count": len(validated_response.sentiment),
                 "topics_count": len(validated_response.topics),
@@ -303,54 +286,54 @@ def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeOutput:
             }
         })  
 
-        return AnalyzeOutput(sentiment=validated_response.sentiment, 
+    return AnalyzeOutput(sentiment=validated_response.sentiment, 
                               topics=validated_response.topics, 
                               confidence=validated_response.confidence)
 
 
-    except HTTPException as e:
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        fastapihelpers._log_exception_json(error_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": "analyze.fail",
-            "request_id": request_id,
-            "status_code": e.status_code,
-            "latency_ms": latency_ms,
-            "error_type": "unexpected",
-            "detail": str(e),
-        })
-        raise
+    # except HTTPException as e:
+    #     latency_ms = round((time.perf_counter() - start) * 1000, 2)
+    #     fastapihelpers._log_exception_json(error_logger, {
+    #         "ts": fastapihelpers._now_iso(),
+    #         "event": "analyze.fail",
+    #         "request_id": request_id,
+    #         "status_code": e.status_code,
+    #         "latency_ms": latency_ms,
+    #         "error_type": "unexpected",
+    #         "detail": str(e),
+    #     })
+    #     raise
 
-    except OpenAIError as e:
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        fastapihelpers._log_exception_json(error_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": "analyze.fail",
-            "request_id": request_id,
-            "status_code": 502,
-            "latency_ms": latency_ms,
-            "error_type": "openai",
-            "error": str(e),
-            "text_len": len(text),
-            "text_preview": fastapihelpers._text_preview(text),
-        })
-        raise HTTPException(status_code=502, detail="Upstream model request failed")
+    # except OpenAIError as e:
+    #     latency_ms = round((time.perf_counter() - start) * 1000, 2)
+    #     fastapihelpers._log_exception_json(error_logger, {
+    #         "ts": fastapihelpers._now_iso(),
+    #         "event": "analyze.fail",
+    #         "request_id": request_id,
+    #         "status_code": 502,
+    #         "latency_ms": latency_ms,
+    #         "error_type": "openai",
+    #         "error": str(e),
+    #         "text_len": len(text),
+    #         "text_preview": fastapihelpers._text_preview(text),
+    #     })
+    #     raise HTTPException(status_code=502, detail="Upstream model request failed")
 
 
-    except Exception as e:
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        fastapihelpers._log_exception_json(error_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": "analyze.fail",
-            "request_id": request_id,
-            "status_code": 500,
-            "latency_ms": latency_ms,
-            "error_type": type(e).__name__,
-            "error": str(e),
-            "text_len": len(text),
-            "text_preview": fastapihelpers._text_preview(text),
-        })
-        raise HTTPException(status_code=500, detail="Internal server error")
+    # except Exception as e:
+    #     latency_ms = round((time.perf_counter() - start) * 1000, 2)
+    #     fastapihelpers._log_exception_json(error_logger, {
+    #         "ts": fastapihelpers._now_iso(),
+    #         "event": "analyze.fail",
+    #         "request_id": request_id,
+    #         "status_code": 500,
+    #         "latency_ms": latency_ms,
+    #         "error_type": type(e).__name__,
+    #         "error": str(e),
+    #         "text_len": len(text),
+    #         "text_preview": fastapihelpers._text_preview(text),
+    #     })
+    #     raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/")
 def root():

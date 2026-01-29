@@ -20,7 +20,7 @@ def _call_model_json(
         schema_dict: Dict[str, Any],
         system_prompt: str,
         text: str,
-        model: str = "gtp-5-nano",
+        model: str = "gpt-5-nano",
         request_id: str | None = None,
         event_prefix: str = "model",
         error_logger: Logger,
@@ -55,7 +55,7 @@ def _call_model_json(
     start = time.perf_counter()
 
     if text is None or not text.strip():
-        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
     
     # Build response_format expected by OpenAI SDK
     response_format = {
@@ -89,7 +89,7 @@ def _call_model_json(
         
         #Validate against Pydanticv model
         try:
-            if hasattr(ModelClass, "model validate"):  # pydantic V2
+            if hasattr(ModelClass, "model_validate"):  # pydantic V2
                 validated = ModelClass.model_validate(parsed)
             else: #Pydantic v1
                 validated=ModelClass.parse_obj(parsed)

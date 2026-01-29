@@ -4,7 +4,7 @@ import main
 client = TestClient(main.app)
 
 def test_empty_text_returns_400():
-    r = client.post("/v1/summarize", json={"text": "   "})
+    r = client.post("/summarize", json={"text": "   "})
     assert r.status_code == 400
     assert r.json()["detail"] == "Text cannot be empty"
 
