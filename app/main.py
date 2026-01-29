@@ -51,7 +51,7 @@ from core.fastapi_client import app
 # ----------------------------------
 # Logging 
 # ----------------------------------
-fastapihelpers.setup_logging()
+#fastapihelpers.setup_logging()
 
 log_file = "open_api_log_file.txt"
 error_file = "open_api_error_file.txt"
@@ -433,7 +433,8 @@ async def timing_middleware(request: Request, call_next):
         # This ALWAYS runs — success or exception
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
 
-        logging.getLogger("request").info({
+        fastapihelpers._log_exception_json(reqres_logger, {
+            "ts": fastapihelpers._now_iso(),
             "event": "http.request",
             "request_id": request.state.request_id,
             "method": request.method,
