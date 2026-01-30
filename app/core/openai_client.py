@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#app/core/openapi_client.py
 
 from openai import OpenAI
 import os

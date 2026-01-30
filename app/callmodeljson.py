@@ -2,7 +2,7 @@ from typing import Any, Dict, Type, TypeVar, Optional
 from pydantic import BaseModel
 from fastapi import HTTPException
 from openai import OpenAIError
-from logging import Logger
+from logging import Logger, INFO, ERROR
 import openai
 
 import json
@@ -54,6 +54,7 @@ def _call_model_json(
 
     if schema_dict is None:
         schema_dict = _openai_strictify_json_schema(pydantic_to_json_schema(ModelClass))
+        #schema_dict = pydantic_to_json_schema(ModelClass)
     start = time.perf_counter()
 
     if text is None or not text.strip():
@@ -97,8 +98,9 @@ def _call_model_json(
                 validated=ModelClass.parse_obj(parsed)
         except Exception as e:
             #Log schema mismatch, then return 502 (upstream output invalid)
-            fastapihelpers._log_exception_json(error_logger, {
+            fastapihelpers._log_json(error_logger, {
                 "ts": fastapihelpers._now_iso(),
+                "called": " by _call_model_json Exception",
                 "event": f"{event_prefix}.schema_validation_failed",
                 "request_id": request_id,
                 "model": model,
@@ -106,7 +108,7 @@ def _call_model_json(
                 "raw_content_preview": fastapihelpers._text_preview(content, 500),
                 "error_type": type(e).__name__,
                 "error": str(e),
-            })
+            }ERROR)
             raise HTTPException(status_code=502, detail="Model returned invalid structured output")
 
         return validated
@@ -116,16 +118,17 @@ def _call_model_json(
         raise
 
     except OpenAIError as e:
-        fastapihelpers._log_exception_json(error_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": f"{event_prefix}.openai_error",
-            "request_id": request_id,
-            "model": model,
-            "schema_name": schema_name,
-            "error_type": type(e).__name__,
-            "error": str(e),
-        })
-        raise HTTPException(status_code=502, detail=f"Upstream model request failed: {str(e)}")
+        raise
+        # fastapihelpers._log_exception_json(error_logger, {
+        #     "ts": fastapihelpers._now_iso(),
+        #     "event": f"{event_prefix}.openai_error",
+        #     "request_id": request_id,
+        #     "model": model,
+        #     "schema_name": schema_name,
+        #     "error_type": type(e).__name__,
+        #     "error": str(e),
+        # })
+        # raise HTTPException(status_code=502, detail=f"Upstream model request failed: {str(e)}")
 
 
     except Exception as e:

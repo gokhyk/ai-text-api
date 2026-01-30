@@ -1,10 +1,17 @@
 import logging
+
 from logging.handlers import RotatingFileHandler
-from typing import Any, Annotated
+from typing import Any, Annotated, Dict, Type
 from datetime import datetime, timezone
+from pydantic import BaseModel
+
 import traceback
 import json
 import uuid
+
+log_file = "open_api_log_file.txt"
+error_file = "open_api_error_file.txt"
+
 
 
 def _new_request_id() -> str:
@@ -21,7 +28,7 @@ def _text_preview(text: str, limit: int = 100) -> str:
 
 def _setup_jsonl_logger(name: str, path: str, level: int) -> logging.Logger:
     logger = logging.getLogger(name)
-    #logger.setLevel(level)
+    logger.setLevel(logging.DEBUG)
     logger.propagate = False
     if not logger.handlers:
         handler = RotatingFileHandler(path, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
@@ -29,6 +36,9 @@ def _setup_jsonl_logger(name: str, path: str, level: int) -> logging.Logger:
         handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(handler)
     return logger    
+
+reqres_logger = _setup_jsonl_logger("openai.reqres", log_file, logging.INFO)
+error_logger = _setup_jsonl_logger("openai.error", error_file, logging.ERROR)
 
 
 
@@ -48,12 +58,13 @@ def _exception_to_dict(e: Exception) -> dict[str, Any]:
         ],
     }
 
-def _log_exception_json(logger: logging.Logger, payload: dict[str, Any]) -> None:
-    payload = dict(payload)
-    payload["traceback"] = traceback.format_exc()
-    logger.error(json.dumps(payload, ensure_ascii=False))
+# def _log_exception_json(logger: logging.Logger, payload: dict[str, Any]) -> None:
+#     payload = dict(payload)
+#     payload["traceback"] = traceback.format_exc()
+#     logger.error(json.dumps(payload, ensure_ascii=False))
 
 def _log_json(logger: logging.Logger, payload: dict[str, Any], level: int = logging.INFO) -> None:
+    payload = dict(payload)
     logger.log(level, json.dumps(payload, ensure_ascii=False))
 
 
@@ -75,3 +86,5 @@ def _log_json(logger: logging.Logger, payload: dict[str, Any], level: int = logg
 #     logger.addHandler(request_handler)
 #     logger.propagate = False
     
+
+
