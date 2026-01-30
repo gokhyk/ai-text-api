@@ -3,10 +3,9 @@ import main
 
 client = TestClient(main.app)
 
-def test_empty_text_returns_400():
+def test_empty_text_returns_422():
     r = client.post("/summarize", json={"text": "   "})
-    assert r.status_code == 400
-    assert r.json()["detail"] == "Text cannot be empty"
+    assert r.status_code == 422
 
 def test_health_ok():
     r = client.get("/health")

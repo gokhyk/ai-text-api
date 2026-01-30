@@ -9,9 +9,29 @@ import traceback
 import json
 import uuid
 
+try:
+    # -------- Pydantic v2 ---------
+    from pydantic import StringConstraints #type: ignore
+
+    NonBlankStr = Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+        )
+    ]
+except Exception:
+    # --------Pydantic v1 ---------
+    from pydantic import constr   # type: ignore
+
+    NonBlankStr = constr(
+        strip_whitespace=True,
+        min_length=1
+    )
+
+
 log_file = "open_api_log_file.txt"
 error_file = "open_api_error_file.txt"
-
 
 
 def _new_request_id() -> str:
@@ -58,33 +78,7 @@ def _exception_to_dict(e: Exception) -> dict[str, Any]:
         ],
     }
 
-# def _log_exception_json(logger: logging.Logger, payload: dict[str, Any]) -> None:
-#     payload = dict(payload)
-#     payload["traceback"] = traceback.format_exc()
-#     logger.error(json.dumps(payload, ensure_ascii=False))
 
 def _log_json(logger: logging.Logger, payload: dict[str, Any], level: int = logging.INFO) -> None:
     payload = dict(payload)
     logger.log(level, json.dumps(payload, ensure_ascii=False))
-
-
-# def setup_logging():
-#     logging.basicConfig(level=logging.INFO)
-
-#     request_handler = RotatingFileHandler(
-#         "requests.log",
-#         maxBytes=5_000_000,
-#         backupCount=5
-#     )
-
-#     formatter = logging.Formatter(
-#         "%(asctime)s %(levelname)s %(name)s %(message)s"
-#     )
-#     request_handler.setFormatter(formatter)
-
-#     logger = logging.getLogger("request")
-#     logger.addHandler(request_handler)
-#     logger.propagate = False
-    
-
-

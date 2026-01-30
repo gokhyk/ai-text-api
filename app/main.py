@@ -2,28 +2,25 @@
 from __future__ import annotations
 
 import json
-
 import os
 import time
 import uuid
 import logging
+import traceback
 
 from datetime import datetime, timezone
-
 from typing import Any, Annotated
-
 from openai import OpenAIError
-
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-import traceback
 
 import fastapihelpers
 from callmodeljson import _call_model_json
+from fastapihelpers import NonBlankStr
 
 
 
@@ -39,28 +36,14 @@ try:
 except Exception:
     ValidationError = Exception
 
-#load_dotenv()
-#assert os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"
-#app = FastAPI()
-#client = OpenAI()  # <-- CORRECT
 from core.openai_client import client
 from core.fastapi_client import app
-
-assert hasattr(app.state, "reqres_logger"), "reqres_logger not initialized on app.state"
-assert hasattr(app.state, "error_logger"), "error_logger not initialized on app.state"
 
 # ----------------------------------
 # Logging 
 # ----------------------------------
-#fastapihelpers.setup_logging()
-
-# log_file = "open_api_log_file.txt"
-# error_file = "open_api_error_file.txt"
-
-# reqres_logger = fastapihelpers._setup_jsonl_logger("openai.reqres", log_file, logging.INFO)
-# error_logger = fastapihelpers._setup_jsonl_logger("openai.error", error_file, logging.ERROR)
-
-
+assert hasattr(app.state, "reqres_logger"), "reqres_logger not initialized on app.state"
+assert hasattr(app.state, "error_logger"), "error_logger not initialized on app.state"
 
 # ----------------------------
 # Schemas
@@ -99,23 +82,10 @@ class AnalyzeOutput(BaseModel):
             extra = "forbid"
 
 class SummarizeRequest(BaseModel):
-    text: NonEmptyStr
-
+    text: NonBlankStr
 
 class AnalyzeRequest(BaseModel):
-    text: NonEmptyStr
-
-
-SUMMARY_SCHEMA =  {
-                "type": "object",
-                    "properties": {
-                    "summary": {"type": "string"},
-                    "key_points": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["summary", "key_points"],
-                "additionalProperties": False,
-            }
-
+    text: NonBlankStr
 
 @app.post("/summarize", response_model=SummarizeOutput)
 def summarize(payload: SummarizeRequest, request: Request) -> SummarizeOutput:
@@ -126,17 +96,7 @@ def summarize(payload: SummarizeRequest, request: Request) -> SummarizeOutput:
     reqres_logger = request.app.state.reqres_logger
     error_logger = request.app.state.error_logger
 
-    text = (payload.text or "").strip()
-    if not text:
-        fastapihelpers._log_json(reqres_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": "summarize.fail",
-            "request_id": request_id,
-            "status_code": 400,
-            "error_type": "validation",
-            "error": "Text cannot be empty",
-        }, logging.INFO)
-        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    text = payload.text
 
     fastapihelpers._log_json(reqres_logger, {
         "ts": fastapihelpers._now_iso(),
@@ -175,34 +135,13 @@ def summarize(payload: SummarizeRequest, request: Request) -> SummarizeOutput:
 
     return SummarizeOutput(summary=validated_response.summary, key_points=validated_response.key_points)
 
-ANALYZE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "sentiment": {"type": "array", "items": {"type": "string"}},
-        "topics": {"type": "array", "items": {"type": "string"}},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 10},
-    },
-    "required": ["sentiment", "topics", "confidence"],
-    "additionalProperties": False,
-}
-
 @app.post("/analyze", response_model=AnalyzeOutput)
 def analyze(payload: AnalyzeRequest, request: Request) -> AnalyzeOutput:
  
     model="gpt-5-nano"    
     request_id = get_request_id(request)
 
-    text = (payload.text or "").strip()
-    if not text:
-        fastapihelpers._log_json(fastapihelpers.reqres_logger, {
-            "ts": fastapihelpers._now_iso(),
-            "event": "analyze.fail",
-            "request_id": request_id,
-            "status_code": 400,
-            "error_type": "validation",
-            "error": "Text cannot be empty",
-        }, logging.INFO)
-        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    text = payload.text
 
     fastapihelpers._log_json(fastapihelpers.reqres_logger, {
         "ts": fastapihelpers._now_iso(),
@@ -250,8 +189,6 @@ def analyze(payload: AnalyzeRequest, request: Request) -> AnalyzeOutput:
                               topics=validated_response.topics, 
                               confidence=validated_response.confidence)
 
-
-
 @app.get("/")
 def root():
     return {
@@ -270,6 +207,7 @@ def index():
         </body>
     </html>
     """
+
 @app.get("/health")
 def health():
     return {
@@ -288,42 +226,6 @@ def log_test():
         {"ts": fastapihelpers._now_iso(), "event": "log_test", "ok": True}
     )
     return {"status": "logged"}
-
-
-""" @app.middleware("http")
-async def timing_middleware(request, call_next):
-
-    request_id = fastapihelpers.get_request_id()
-    text = (request.text or "").strip()
-    fastapihelpers._log_json(reqres_logger, {
-        "ts": fastapihelpers._now_iso(),
-        "event": "analyze.start",
-        "request_id": request_id,
-        "text_len": len(text),
-        "text_preview": fastapihelpers._text_preview(text),
-        "model": model,
-    })
-    start = time.perf_counter()
-    response = await call_next(request)
-    latency_ms = (time.perf_counter() - start) * 1000
-    #print(f"latency is {latency_ms}")
-    #log_request(request, latency_ms)
-    print(response)
-    return response
-
-    #request_id = fastapihelpers.get_request_id()
-    # fastapihelpers._log_json(reqres_logger, {
-    #     "ts": fastapihelpers._now_iso(),
-    #     "event": "analyze.start",
-    #     "request_id": request_id,
-    #     "text_len": len(text),
-    #     "text_preview": fastapihelpers._text_preview(text),
-    #     "model": model,
-    # }) """
-
-
-#logger = logging.getLogger("request")
-
 
 @app.middleware("http")
 async def timing_middleware(request: Request, call_next):

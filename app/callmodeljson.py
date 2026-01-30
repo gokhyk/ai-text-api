@@ -56,9 +56,6 @@ def _call_model_json(
         schema_dict = _openai_strictify_json_schema(pydantic_to_json_schema(ModelClass))
         #schema_dict = pydantic_to_json_schema(ModelClass)
     start = time.perf_counter()
-
-    if text is None or not text.strip():
-        raise HTTPException(status_code=400, detail="Text cannot be empty")
     
     # Build response_format expected by OpenAI SDK
     response_format = {
@@ -108,7 +105,7 @@ def _call_model_json(
                 "raw_content_preview": fastapihelpers._text_preview(content, 500),
                 "error_type": type(e).__name__,
                 "error": str(e),
-            }ERROR)
+            }, ERROR)
             raise HTTPException(status_code=502, detail="Model returned invalid structured output")
 
         return validated
@@ -119,17 +116,6 @@ def _call_model_json(
 
     except OpenAIError as e:
         raise
-        # fastapihelpers._log_exception_json(error_logger, {
-        #     "ts": fastapihelpers._now_iso(),
-        #     "event": f"{event_prefix}.openai_error",
-        #     "request_id": request_id,
-        #     "model": model,
-        #     "schema_name": schema_name,
-        #     "error_type": type(e).__name__,
-        #     "error": str(e),
-        # })
-        # raise HTTPException(status_code=502, detail=f"Upstream model request failed: {str(e)}")
-
 
     except Exception as e:
         raise HTTPException(status_code=500, detail="Internal server error")
